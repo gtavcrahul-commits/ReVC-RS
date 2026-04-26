@@ -14,7 +14,9 @@ import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.content.res.Configuration;
 import android.graphics.Bitmap;
+import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.Paint;
 import android.graphics.PorterDuff;
 import android.graphics.drawable.Drawable;
 import android.hardware.Sensor;
@@ -33,6 +35,7 @@ import android.view.Display;
 import android.view.Gravity;
 import android.view.InputDevice;
 import android.view.KeyEvent;
+import android.view.MotionEvent;
 import android.view.PointerIcon;
 import android.view.Surface;
 import android.view.View;
@@ -62,6 +65,10 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
     private static final int SDL_MAJOR_VERSION = 2;
     private static final int SDL_MINOR_VERSION = 32;
     private static final int SDL_MICRO_VERSION = 8;
+    private static final int JOYSTICK_SIZE_DP = 180;
+    private static final int ACTION_BUTTON_SIZE_DP = 110;
+    private static final int ACTION_BUTTON_MARGIN_DP = 24;
+    private static final int ACTION_BUTTON_SPACING_DP = 12;
 /*
     // Display InputType.SOURCE/CLASS of events and devices
     //
@@ -168,6 +175,147 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
         Log.v(TAG, prefix + "int=" + s_copy + " CLASS={" + cls + " } source(s):" + src);
     }
 */
+
+    private int dpToPx(int dp) {
+        float density = getResources().getDisplayMetrics().density;
+        return (int)(dp * density + 0.5f);
+    }
+
+    private Button createOverlayButton(String label, int keyCode) {
+        Button button = new Button(this);
+        button.setText(label);
+        button.setTextColor(Color.WHITE);
+        button.setBackgroundColor(Color.argb(0xCC, 0, 0, 0));
+        button.setAlpha(0.85f);
+        button.setAllCaps(false);
+        button.setOnTouchListener(new View.OnTouchListener() {
+            @Override
+            public boolean onTouch(View v, MotionEvent event) {
+                if (event.getAction() == MotionEvent.ACTION_DOWN) {
+                    onNativeKeyDown(keyCode);
+                    return true;
+                } else if (event.getAction() == MotionEvent.ACTION_UP || event.getAction() == MotionEvent.ACTION_CANCEL) {
+                    onNativeKeyUp(keyCode);
+                    return true;
+                }
+                return false;
+            }
+        });
+        return button;
+    }
+
+    private static class SDLJoystickView extends View {
+        private final Paint outerPaint;
+        private final Paint knobPaint;
+        private float centerX;
+        private float centerY;
+        private float knobX;
+        private float knobY;
+        private float maxRadius;
+        private boolean leftPressed;
+        private boolean rightPressed;
+        private boolean upPressed;
+        private boolean downPressed;
+
+        public SDLJoystickView(Context context) {
+            super(context);
+            setClickable(true);
+            outerPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+            outerPaint.setColor(Color.argb(0x50, 0, 0, 0));
+            knobPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+            knobPaint.setColor(Color.argb(0xCC, 255, 255, 255));
+        }
+
+        @Override
+        protected void onSizeChanged(int w, int h, int oldw, int oldh) {
+            super.onSizeChanged(w, h, oldw, oldh);
+            centerX = w * 0.5f;
+            centerY = h * 0.5f;
+            knobX = centerX;
+            knobY = centerY;
+            maxRadius = Math.min(w, h) * 0.44f;
+        }
+
+        @Override
+        protected void onDraw(Canvas canvas) {
+            super.onDraw(canvas);
+            canvas.drawCircle(centerX, centerY, maxRadius, outerPaint);
+            canvas.drawCircle(knobX, knobY, maxRadius * 0.35f, knobPaint);
+        }
+
+        private void updateDirectionKeys(boolean left, boolean right, boolean up, boolean down) {
+            if (left != leftPressed) {
+                if (left) {
+                    SDLActivity.onNativeKeyDown(KeyEvent.KEYCODE_DPAD_LEFT);
+                } else {
+                    SDLActivity.onNativeKeyUp(KeyEvent.KEYCODE_DPAD_LEFT);
+                }
+                leftPressed = left;
+            }
+            if (right != rightPressed) {
+                if (right) {
+                    SDLActivity.onNativeKeyDown(KeyEvent.KEYCODE_DPAD_RIGHT);
+                } else {
+                    SDLActivity.onNativeKeyUp(KeyEvent.KEYCODE_DPAD_RIGHT);
+                }
+                rightPressed = right;
+            }
+            if (up != upPressed) {
+                if (up) {
+                    SDLActivity.onNativeKeyDown(KeyEvent.KEYCODE_DPAD_UP);
+                } else {
+                    SDLActivity.onNativeKeyUp(KeyEvent.KEYCODE_DPAD_UP);
+                }
+                upPressed = up;
+            }
+            if (down != downPressed) {
+                if (down) {
+                    SDLActivity.onNativeKeyDown(KeyEvent.KEYCODE_DPAD_DOWN);
+                } else {
+                    SDLActivity.onNativeKeyUp(KeyEvent.KEYCODE_DPAD_DOWN);
+                }
+                downPressed = down;
+            }
+        }
+
+        private void resetKnob() {
+            knobX = centerX;
+            knobY = centerY;
+            updateDirectionKeys(false, false, false, false);
+            invalidate();
+        }
+
+        @Override
+        public boolean onTouchEvent(MotionEvent event) {
+            int action = event.getActionMasked();
+            if (action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_POINTER_DOWN || action == MotionEvent.ACTION_MOVE) {
+                int index = event.getActionIndex();
+                float x = event.getX(index);
+                float y = event.getY(index);
+                float dx = x - centerX;
+                float dy = y - centerY;
+                float distance = (float)Math.sqrt(dx * dx + dy * dy);
+                if (distance > maxRadius) {
+                    dx = dx * maxRadius / distance;
+                    dy = dy * maxRadius / distance;
+                }
+                knobX = centerX + dx;
+                knobY = centerY + dy;
+
+                boolean left = dx < -maxRadius * 0.35f;
+                boolean right = dx > maxRadius * 0.35f;
+                boolean up = dy < -maxRadius * 0.35f;
+                boolean down = dy > maxRadius * 0.35f;
+                updateDirectionKeys(left, right, up, down);
+                invalidate();
+                return true;
+            } else if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL || action == MotionEvent.ACTION_POINTER_UP) {
+                resetKnob();
+                return true;
+            }
+            return false;
+        }
+    }
 
     public static boolean mIsResumedCalled, mHasFocus;
     public static final boolean mHasMultiWindow = (Build.VERSION.SDK_INT >= 24  /* Android 7.0 (N) */);
@@ -392,6 +540,58 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
 
         mLayout = new RelativeLayout(this);
         mLayout.addView(mSurface);
+
+        // Add mobile touch controls overlay on top of the SDL surface.
+        RelativeLayout overlay = new RelativeLayout(this);
+        overlay.setLayoutParams(new RelativeLayout.LayoutParams(
+                RelativeLayout.LayoutParams.MATCH_PARENT,
+                RelativeLayout.LayoutParams.MATCH_PARENT));
+        overlay.setClickable(false);
+        overlay.setFocusable(false);
+        overlay.setFocusableInTouchMode(false);
+
+        SDLJoystickView joystick = new SDLJoystickView(this);
+        joystick.setId(View.generateViewId());
+        RelativeLayout.LayoutParams joystickParams = new RelativeLayout.LayoutParams(
+                dpToPx(JOYSTICK_SIZE_DP),
+                dpToPx(JOYSTICK_SIZE_DP));
+        joystickParams.addRule(RelativeLayout.ALIGN_PARENT_BOTTOM);
+        joystickParams.addRule(RelativeLayout.ALIGN_PARENT_LEFT);
+        joystickParams.setMargins(dpToPx(ACTION_BUTTON_MARGIN_DP), 0,
+                0, dpToPx(ACTION_BUTTON_MARGIN_DP));
+        overlay.addView(joystick, joystickParams);
+
+        Button runButton = createOverlayButton("RUN", KeyEvent.KEYCODE_SHIFT_LEFT);
+        runButton.setId(View.generateViewId());
+        RelativeLayout.LayoutParams runParams = new RelativeLayout.LayoutParams(
+                dpToPx(ACTION_BUTTON_SIZE_DP),
+                dpToPx(ACTION_BUTTON_SIZE_DP));
+        runParams.addRule(RelativeLayout.ALIGN_PARENT_BOTTOM);
+        runParams.addRule(RelativeLayout.ALIGN_PARENT_RIGHT);
+        runParams.setMargins(0, 0, dpToPx(ACTION_BUTTON_MARGIN_DP), dpToPx(ACTION_BUTTON_MARGIN_DP));
+        overlay.addView(runButton, runParams);
+
+        Button carButton = createOverlayButton("CAR", KeyEvent.KEYCODE_ENTER);
+        carButton.setId(View.generateViewId());
+        RelativeLayout.LayoutParams carParams = new RelativeLayout.LayoutParams(
+                dpToPx(ACTION_BUTTON_SIZE_DP),
+                dpToPx(ACTION_BUTTON_SIZE_DP));
+        carParams.addRule(RelativeLayout.ABOVE, runButton.getId());
+        carParams.addRule(RelativeLayout.ALIGN_PARENT_RIGHT);
+        carParams.setMargins(0, 0, dpToPx(ACTION_BUTTON_MARGIN_DP), dpToPx(ACTION_BUTTON_SPACING_DP));
+        overlay.addView(carButton, carParams);
+
+        Button jumpButton = createOverlayButton("JUMP", KeyEvent.KEYCODE_SPACE);
+        jumpButton.setId(View.generateViewId());
+        RelativeLayout.LayoutParams jumpParams = new RelativeLayout.LayoutParams(
+                dpToPx(ACTION_BUTTON_SIZE_DP),
+                dpToPx(ACTION_BUTTON_SIZE_DP));
+        jumpParams.addRule(RelativeLayout.ABOVE, carButton.getId());
+        jumpParams.addRule(RelativeLayout.ALIGN_PARENT_RIGHT);
+        jumpParams.setMargins(0, 0, dpToPx(ACTION_BUTTON_MARGIN_DP), dpToPx(ACTION_BUTTON_SPACING_DP));
+        overlay.addView(jumpButton, jumpParams);
+
+        mLayout.addView(overlay);
 
         // Get our current screen orientation and pass it down.
         mCurrentOrientation = SDLActivity.getCurrentOrientation();

@@ -1681,6 +1681,9 @@ void CPad::AffectFromXinput(uint32 pad)
 void CPad::UpdatePads(void)
 {
 #ifndef GTA_PC_CONTROLS
+#ifdef LIBRW_SDL2
+	CapturePad(0);
+#endif
 	Pads[0].Update(0);
 #ifndef MASTER
 	Pads[1].Update(1);

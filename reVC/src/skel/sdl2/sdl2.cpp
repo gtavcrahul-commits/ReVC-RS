@@ -1838,6 +1838,8 @@ RwV2d rightStickPos;
 
 void CapturePad(RwInt32 padID)
 {
+    SDL_GameControllerUpdate();
+
     static SDL_GameController* gamepad = nullptr;
 
     if (padID == 0)
